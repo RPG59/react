@@ -940,10 +940,66 @@ function commitHostComponentMount(finishedWork: Fiber) {
   }
 }
 
+function traverseSiblings(node: Fiber | null): Fiber[] {
+  const res = [];
+
+  while (node) {
+    res.push(node);
+    node = node.sibling;
+  }
+
+  return res;
+}
+
+function getProfilerTreeFiberName(elementType: Fiber.type) {
+  if (elementType === null) {
+    return null;
+  }
+
+  if (typeof elementType === 'object') {
+    return elementType.styledComponentId;
+  }
+
+  if (typeof elementType === 'string') {
+    return elementType;
+  }
+
+  if (typeof elementType === 'function') {
+    return `function ${elementType.name}`;
+  }
+
+  return 'unknown';
+}
+
+function traverseProfilerFiber(node: Fiber) {
+  const res = [];
+
+  traverseSiblings(node).forEach(
+    ({type, actualDuration, child, treeBaseDuration, actualStartTime}) => {
+      const name = getProfilerTreeFiberName(type);
+
+      res.push({
+        name,
+        actualDuration,
+        baseDuration: treeBaseDuration,
+        startTime: actualStartTime,
+        next: traverseProfilerFiber(child),
+      });
+    },
+  );
+
+  return res;
+}
+
 function commitProfilerUpdate(finishedWork: Fiber, current: Fiber | null) {
   if (enableProfilerTimer && getExecutionContext() & CommitContext) {
     try {
-      const {onCommit, onRender} = finishedWork.memoizedProps;
+      const {
+        onCommit,
+        onRender,
+        onProfilerTree,
+        threshold,
+      } = finishedWork.memoizedProps;
       const {effectDuration} = finishedWork.stateNode;
 
       const commitTime = getCommitTime();
@@ -974,6 +1030,13 @@ function commitProfilerUpdate(finishedWork: Fiber, current: Fiber | null) {
             effectDuration,
             commitTime,
           );
+        }
+
+        if (
+          typeof onProfilerTree === 'function' &&
+          threshold < finishedWork.actualDuration
+        ) {
+          onProfilerTree(traverseProfilerFiber(finishedWork));
         }
 
         // Schedule a passive effect for this Profiler to call onPostCommit hooks.
